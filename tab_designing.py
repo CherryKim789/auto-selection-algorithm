@@ -1,153 +1,159 @@
 import streamlit as st
 import pandas as pd
+import binascii
+import lzma
+import io
+import os
 import numpy as np
-import plotly.express as px
+# Import functions from your uploaded codec file
+from dna_codec import encode_bits_to_dna, gc_content, homopolymer_stats, clean_dna_text
+
+def get_file_details(uploaded_file):
+    """Fetch file metadata for the left sidebar display."""
+    ext = os.path.splitext(uploaded_file.name)[1].lower()
+    details = {
+        "Filename": uploaded_file.name,
+        "MIME Type": uploaded_file.type,
+        "Extension": ext.upper(),
+        "Size": f"{uploaded_file.size:,} bytes"
+    }
+    return details, ext
+
+def process_to_bitstream(uploaded_file, ext):
+    """Convert various file types to bitstream, handling raw binary text files."""
+    content = uploaded_file.getvalue()
+    # Check if the file is already a text bitstream (0s and 1s)
+    if ext in ['.txt', '.bin']:
+        try:
+            decoded_text = content.decode("utf-8").strip()
+            if all(c in '01' for c in decoded_text):
+                return decoded_text, "Direct Bitstream Read"
+        except:
+            pass
+    
+    # Standard conversion for images, docs, etc.
+    bitstream = bin(int(binascii.hexlify(content), 16))[2:].zfill(len(content) * 8)
+    return bitstream, "Hex-to-Binary Conversion"
+
+def generate_fastq(dna_seq):
+    """Simulate a FASTQ format with high-quality Phred scores."""
+    header = "@DNA_STORAGE_STREAM_01"
+    quality = "I" * len(dna_seq) # 'I' represents a high Phred score of 40
+    return f"{header}\n{dna_seq}\n+\n{quality}"
+
+def display_preview(uploaded_file, ext):
+    """Visual preview of the input data."""
+    if ext in ['.png', '.jpg', '.jpeg']:
+        st.image(uploaded_file, use_container_width=True)
+    elif ext in ['.txt', '.py', '.dna']:
+        st.text_area("File Content Preview", uploaded_file.getvalue().decode("utf-8")[:500], height=200)
+    elif "video" in uploaded_file.type:
+        st.video(uploaded_file)
+    else:
+        st.info("No visual preview available for this file format.")
 
 def render_designing():
     st.header("🧬 DNA Data Design & Pipeline Management")
-    st.markdown("Manage the complete lifecycle of DNA data storage, from digital encoding to retrieval.")
+    
+    tab_raw, tab_comp = st.tabs(["📄 Case 1: Raw Data Pipeline", "📦 Case 2: Compressed Data Pipeline"])
 
-    # Create 4 Sub-tabs inside the Designing Tab
-    sub_tab_encoding, sub_tab_wetlab, sub_tab_decoding, sub_tab_analysis = st.tabs([
-        "📤 1. Encoding & Design", 
-        "🧪 2. Wet-lab Simulation", 
-        "📥 3. Decoding & Retrieval", 
-        "🔬 4. Comparative Analysis"
-    ])
+    mapping_rules = ["R0_B9", "R1_B12", "R2_B15", "Rinf_B16", "Simple Mapping"]
 
-    # ---------------------------------------------------------
-    # SUB-TAB 1: ENCODING & DESIGN
-    # ---------------------------------------------------------
-    with sub_tab_encoding:
-        st.subheader("DNA Encoding Pipeline")
-        st.markdown("Transform digital files into synthesis-ready DNA sequences.")
-
-        st.subheader("1. Data Binarization")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            uploaded_file = st.file_uploader("Select Input File (Image, Video, Document)", 
-                                             type=['png', 'jpg', 'pdf', 'mp4', 'txt'], 
-                                             key="design_upload")
+    # --- CASE 1: RAW DATA ---
+    with tab_raw:
+        uploaded_file = st.file_uploader("Upload Data (Images, Docs, or Bitstream .txt)", key="raw_up")
         if uploaded_file:
-            with col2:
-                st.success(f"File Loaded: {uploaded_file.name}")
-                st.info(f"Size: {uploaded_file.size/1024:.2f} KB")
+            col_l, col_r = st.columns([1, 2])
+            details, ext = get_file_details(uploaded_file)
             
-            st.divider()
-            st.subheader("2. Binary Compression")
-            c_comp1, c_comp2 = st.columns(2)
-            with c_comp1:
-                compression_algo = st.selectbox("Compression Method", ["None", "LZMA", "Gzip", "Zstd"], key="comp_algo")
-            with c_comp2:
-                st.write("**Target Binary String:**")
-                st.code("01011010... (Compressed)", language="text")
-
-            st.divider()
-            st.subheader("3. Sequence Design & Mapping")
-            m_col1, m_col2, m_col3 = st.columns(3)
-            with m_col1:
-                mapping_rule = st.selectbox("Encoding Rule", ["Simple (00=A, 01=C...)", "Rotational (R1)", "Church et al."], key="map_rule")
-            with m_col2:
-                fec_type = st.selectbox("Error Correction (FEC)", ["Reed-Solomon", "LDPC", "Fountain Code"], key="fec_design")
-            with m_col3:
-                redundancy = st.slider("Redundancy (%)", 0, 50, 15, key="red_design")
-
-            with st.expander("⚙️ Advanced Biological Constraints"):
-                gc_range = st.slider("Target GC Content (%)", 30, 70, (40, 60))
-                homo_limit = st.number_input("Max Homopolymer Length", value=3)
-
-            st.divider()
-            if st.button("🚀 EXECUTE ENCODING PIPELINE", key="btn_execute_design"):
-                st.balloons()
-                st.subheader("📊 Encoding Performance")
-                met1, met2, met3 = st.columns(3)
-                met1.metric("Density", "1.65 bits/nt")
-                met2.metric("Efficiency", "98.2%")
-                met3.metric("Net Rate", "0.85")
-
-                chart_col1, chart_col2 = st.columns(2)
-                with chart_col1:
-                    df_base = pd.DataFrame({'Nucleotide': ['A', 'C', 'G', 'T'], 'Ratio (%)': [24.8, 25.2, 25.1, 24.9]})
-                    fig_base = px.pie(df_base, values='Ratio (%)', names='Nucleotide', title="Nucleotide Distribution")
-                    st.plotly_chart(fig_base, use_container_width=True)
-                with chart_col2:
-                    gc_data = np.random.normal(50, 2, 100)
-                    fig_gc = px.line(y=gc_data, title="GC Content Stability")
-                    st.plotly_chart(fig_gc, use_container_width=True)
-
-                st.subheader("🔬 Final DNA Pool")
-                st.text_area("FASTA Preview", value=">Segment_01\nATCGGCTAGCT...\n>Segment_02\nGCTAGCTAGCT...", height=100)
-                st.download_button("📥 Download FASTA", data=">DNA_DATA", file_name="output.fasta")
-        else:
-            st.info("Please upload a file to begin.")
-
-    # ---------------------------------------------------------
-    # SUB-TAB 2: WET-LAB SIMULATION
-    # ---------------------------------------------------------
-    with sub_tab_wetlab:
-        st.subheader("🧪 Wet-lab & Noise Simulation")
-        st.markdown("Simulate the chemical and biological processes that introduce errors.")
-        
-        col_w1, col_w2 = st.columns(2)
-        with col_w1:
-            st.write("**Synthesis & PCR Parameters**")
-            st.slider("Synthesis Error Rate (per nt)", 0.0, 0.05, 0.01, format="%.3f")
-            st.number_input("PCR Cycles", 10, 40, 25)
-        with col_w2:
-            st.write("**Storage Conditions**")
-            st.select_slider("Storage Time Simulation", options=["1 Year", "10 Years", "100 Years", "1000 Years"])
-            st.slider("Decay Factor", 0.0, 1.0, 0.05)
-        
-        if st.button("🧪 Run Noise Simulation", key="btn_sim"):
-            st.warning("Simulating data degradation...")
-            st.info("Resulting BER (Bit Error Rate): 0.045% after simulation.")
-
-    # ---------------------------------------------------------
-    # SUB-TAB 3: DECODING
-    # ---------------------------------------------------------
-    with sub_tab_decoding:
-        st.subheader("📥 Decoding & Data Retrieval")
-        st.markdown("Reconstruct the original digital file from sequenced DNA reads.")
-        
-        uploaded_fastq = st.file_uploader("Upload Sequenced Data (FASTQ/FASTA)", type=['fastq', 'fasta', 'txt'], key="decode_upload")
-        
-        if uploaded_fastq:
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                st.write("**Decoding Configuration**")
-                st.selectbox("Inference Algorithm", ["Viterbi", "BWA-MEM Alignment", "Deep Learning-based"], key="algo_dec")
-                st.checkbox("Apply FEC Recovery", value=True)
+            with col_l:
+                st.subheader("Data Metadata")
+                for k, v in details.items(): st.write(f"**{k}:** {v}")
+                rule = st.selectbox("Select Mapping Rule", mapping_rules, key="r1")
             
-            with col_d2:
-                st.write("**Quality Control (QC)**")
-                st.metric("Mean Phred Score", "34.2")
-                st.progress(95, text="Alignment Progress")
+            with col_r:
+                st.subheader("Visual Preview")
+                display_preview(uploaded_file, ext)
 
-            if st.button("🔓 Start Decoding", key="btn_decode"):
-                st.spinner("Reconstructing file...")
-                st.success("File Successfully Restored!")
-                st.download_button("📥 Download Restored File", data="dummy_data", file_name="restored_file.png")
-        else:
-            st.info("Please upload sequenced DNA data to start decoding.")
+            if st.button("🚀 Execute Raw Pipeline", key="exec_raw"):
+                bits, method = process_to_bitstream(uploaded_file, ext)
+                dna_seq, _ = encode_bits_to_dna(bits, scheme_name=rule if rule != "Simple Mapping" else "R1_B12")
+                
+                # --- RESULTS ---
+                st.divider()
+                st.success(f"Encoding Complete using {method}")
+                
+                res_col1, res_col2 = st.columns(2)
+                with res_col1:
+                    st.write("**Bitstream Preview (Top 128 bits):**")
+                    st.code(bits[:128] + "...")
+                    st.download_button("📥 Download Bitstream (.bin)", data=bits, file_name="raw_bitstream.bin")
+                
+                with res_col2:
+                    st.write(f"**DNA Sequence ({rule}):**")
+                    st.code(dna_seq[:100] + "...")
+                    st.download_button("📥 Download DNA Text (.dna)", data=dna_seq, file_name="output.dna")
 
-    # ---------------------------------------------------------
-    # SUB-TAB 4: ANALYSIS
-    # ---------------------------------------------------------
-    with sub_tab_analysis:
-        st.subheader("🔬 Comparative Analysis")
-        st.write("Evaluate the performance of different encoding/decoding strategies.")
-        
-        # Mock Data for Analysis
-        df_analysis = pd.DataFrame({
-            'Method': ['Simple', 'Rotational', 'Church', 'Our Method'],
-            'PSNR (dB)': [32.1, 35.4, 34.0, 38.5],
-            'Bit Error Rate': [0.02, 0.012, 0.015, 0.004]
-        })
-        
-        col_an1, col_an2 = st.columns(2)
-        with col_an1:
-            fig_psnr = px.bar(df_analysis, x='Method', y='PSNR (dB)', title="Visual Quality (PSNR)")
-            st.plotly_chart(fig_psnr, use_container_width=True)
-        with col_an2:
-            fig_ber = px.line(df_analysis, x='Method', y='Bit Error Rate', title="Reliability (BER)")
-            st.plotly_chart(fig_ber, use_container_width=True)
+                st.subheader("Analysis & Export")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("GC Content", f"{gc_content(dna_seq):.2%}")
+                stats = homopolymer_stats(dna_seq)
+                m2.metric("Max Homopolymer", stats['longest'])
+                m3.metric("Density", f"{len(bits)/len(dna_seq):.2f} bits/nt")
+
+                dl1, dl2 = st.columns(2)
+                dl1.download_button("📥 Download FASTA", data=f">RAW_DATA_{rule}\n{dna_seq}", file_name="data.fasta")
+                dl2.download_button("📥 Download FASTQ", data=generate_fastq(dna_seq), file_name="data.fastq")
+
+    # --- CASE 2: COMPRESSED DATA ---
+    with tab_comp:
+        uploaded_file_c = st.file_uploader("Upload Data for Compression", key="comp_up")
+        if uploaded_file_c:
+            col_l, col_r = st.columns([1, 2])
+            details, ext = get_file_details(uploaded_file_c)
+            
+            with col_l:
+                st.subheader("Data Metadata")
+                for k, v in details.items(): st.write(f"**{k}:** {v}")
+                rule_c = st.selectbox("Select Mapping Rule", mapping_rules, key="r2")
+            
+            with col_r:
+                st.subheader("Visual Preview")
+                display_preview(uploaded_file_c, ext)
+
+            if st.button("🚀 Execute Compressed Pipeline", key="exec_comp"):
+                # Compression Step
+                original_bytes = uploaded_file_c.getvalue()
+                compressed_bytes = lzma.compress(original_bytes)
+                ratio = (1 - (len(compressed_bytes)/len(original_bytes))) * 100
+                
+                st.warning(f"Note: Data compressed using LZMA algorithm. Compression Ratio: {ratio:.2f}%")
+                
+                # Convert compressed bytes to bitstream
+                c_bits = bin(int(binascii.hexlify(compressed_bytes), 16))[2:].zfill(len(compressed_bytes) * 8)
+                dna_seq, _ = encode_bits_to_dna(c_bits, scheme_name=rule_c if rule_c != "Simple Mapping" else "R1_B12")
+                
+                st.divider()
+                res_col1, res_col2 = st.columns(2)
+                with res_col1:
+                    st.write("**Compressed Bitstream:**")
+                    st.code(c_bits[:128] + "...")
+                    st.download_button("📥 Download Comp. Bitstream", data=c_bits, file_name="comp_bitstream.bin")
+                
+                with res_col2:
+                    st.write(f"**DNA Sequence ({rule_c}):**")
+                    st.code(dna_seq[:100] + "...")
+                    st.download_button("📥 Download DNA Sequence", data=dna_seq, file_name="comp_output.txt")
+
+                st.subheader("Analysis & Scientific Metrics")
+                stats = homopolymer_stats(dna_seq)
+                st.json({
+                    "Compression_Ratio": f"{ratio:.2f}%",
+                    "GC_Content": f"{gc_content(dna_seq):.2%}",
+                    "Homopolymer_Stats": stats,
+                    "Total_Nucleotides": len(dna_seq)
+                })
+
+                dl_a, dl_b = st.columns(2)
+                dl_a.download_button("📥 Download FASTA (Comp)", data=f">COMP_DATA_{rule_c}\n{dna_seq}", file_name="comp.fasta")
+                dl_b.download_button("📥 Download FASTQ (Comp)", data=generate_fastq(dna_seq), file_name="comp.fastq")
