@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import json
-import re
-import tempfile
+import bz2
 import difflib
 import gzip
-import bz2
-import lzma
-import zipfile
 import io
+import json
+import lzma
 import math
+import re
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -25,29 +25,28 @@ try:
 except Exception:
     np = None
 
-
 import dna_codec
-from dna_storage_core import decode_dna_sequence, encode_file, read_bytes, sha256_bytes, bytes_to_bitstring
-
+from dna_storage_core import (
+    bytes_to_bitstring,
+    decode_dna_sequence,
+    encode_file,
+    read_bytes,
+    sha256_bytes,
+)
 from ui_adapters import (
     display_file_preview,
     save_uploaded_file,
     validate_uploaded_file,
-    infer_media_kind,
 )
 
-# ============================================================
-# Simple 4-block UI
-# ============================================================
-
-APP_TITLE = "DNA Storage Pipeline"
+APP_TITLE = "Automatic Selection for Compression and DNA Design"
 SEED = "ddss-seed"
 STRATEGY = "hierarchical_full_automatic"
 
-INPUT_IMAGE_WIDTH = 360
-OUTPUT_IMAGE_WIDTH = 360
+INPUT_IMAGE_WIDTH = 340
+OUTPUT_IMAGE_WIDTH = 340
 SHOW_IMAGE_FULL_WIDTH = False
-
+DNA_PREVIEW_CHARS = 12000
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -59,97 +58,104 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+:root {
+    --green-50: #f0fdf4;
+    --green-100: #dcfce7;
+    --green-200: #bbf7d0;
+    --green-300: #86efac;
+    --green-500: #22c55e;
+    --green-600: #16a34a;
+    --green-700: #15803d;
+    --green-800: #166534;
+    --slate-50: #f8fafc;
+    --slate-100: #f1f5f9;
+    --slate-200: #e2e8f0;
+    --slate-300: #cbd5e1;
+    --slate-500: #64748b;
+    --slate-700: #334155;
+    --slate-900: #0f172a;
+}
+
+html, body, [class*="css"] {
+    color: var(--slate-900);
+}
+
 .block-container {
-    padding-top: 1.1rem;
-    padding-bottom: 2rem;
-    max-width: 1180px;
+    padding-top: 1.1rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1180px !important;
 }
-h1 {
-    font-size: 30px !important;
-    font-weight: 800 !important;
-    margin-bottom: 0.4rem !important;
-}
-h2, h3 {
-    font-weight: 760 !important;
-}
+
 section[data-testid="stSidebar"] {
     display: none;
 }
+
 div[data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 18px !important;
-    border: 1px solid rgba(15, 23, 42, 0.12) !important;
-    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+    border: 1px solid rgba(22, 101, 52, 0.12) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98)) !important;
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05) !important;
 }
+
+h1, h2, h3 {
+    letter-spacing: -0.02em;
+}
+
 div[data-testid="stMetric"] {
-    border: 1px solid rgba(15, 23, 42, 0.10);
+    border: 1px solid rgba(22, 101, 52, 0.10);
     border-radius: 14px;
     padding: 0.55rem 0.7rem;
-    background: rgba(255,255,255,0.85);
+    background: rgba(255,255,255,0.88);
 }
+
 div[data-testid="stMetricLabel"] p {
     font-size: 13px !important;
-    color: #64748b !important;
+    color: var(--slate-500) !important;
 }
+
 div[data-testid="stMetricValue"] {
-    font-size: 22px !important;
+    font-size: 20px !important;
     font-weight: 780 !important;
 }
-.stButton button {
+
+.stButton > button {
     border-radius: 12px !important;
     font-weight: 700 !important;
-    height: 2.75rem;
+    min-height: 2.8rem !important;
+    width: 100% !important;
+    border: 1px solid rgba(22, 101, 52, 0.18) !important;
 }
-.file-name-box {
-    border: 1px solid rgba(15, 23, 42, 0.14);
-    border-radius: 12px;
-    padding: 0.65rem 0.8rem;
-    background: rgba(241,245,249,0.80);
-    font-size: 14px;
-    word-break: break-all;
-    margin: 0.35rem 0 0.8rem 0;
+
+.stButton > button[kind="primary"] {
+    background: linear-gradient(180deg, var(--green-600), var(--green-700)) !important;
+    color: white !important;
 }
-.muted {
-    color: #64748b;
-    font-size: 13px;
+
+.stButton > button:hover {
+    border-color: rgba(22, 101, 52, 0.30) !important;
 }
-.result-box {
-    border-radius: 14px;
-    border: 1px solid rgba(15, 23, 42, 0.10);
-    background: rgba(255,255,255,0.70);
-    padding: 0.8rem 0.9rem;
-}
-/* Upload box */
+
 div[data-testid="stFileUploader"] section {
-    border: 2px dashed rgba(14, 165, 233, 0.45) !important;
+    border: 2px dashed rgba(34, 197, 94, 0.48) !important;
     border-radius: 18px !important;
-    background: linear-gradient(180deg, rgba(240,249,255,0.95), rgba(248,250,252,0.95)) !important;
+    background: linear-gradient(180deg, rgba(240,253,244,0.96), rgba(248,250,252,0.96)) !important;
     padding: 1rem !important;
 }
 
-/* Change Browse files button to Browse */
 div[data-testid="stFileUploader"] button {
-    font-size: 0 !important;
     border-radius: 12px !important;
     font-weight: 700 !important;
+    padding: 0.45rem 1rem !important;
 }
 
-div[data-testid="stFileUploader"] button::after {
-    content: "Browse";
-    font-size: 14px !important;
-    font-weight: 700 !important;
-}
-
-/* Hide some default uploader instruction text if needed */
 div[data-testid="stFileUploader"] small {
-    color: #64748b !important;
+    color: var(--slate-500) !important;
 }
-/* Hide Streamlit default uploaded file row: filename + size */
+
 div[data-testid="stFileUploaderFile"] {
     display: none !important;
 }
 
-/* Extra fallback for some Streamlit versions */
 div[data-testid="stFileUploader"] ul {
     display: none !important;
 }
@@ -157,21 +163,108 @@ div[data-testid="stFileUploader"] ul {
 div[data-testid="stFileUploader"] div[data-testid="stFileUploaderFile"] {
     display: none !important;
 }
+
+.app-title-wrap {
+    margin-top: 0.10rem;
+    margin-bottom: 1.1rem;
+    padding: 0.2rem 0 0.4rem 0;
+}
+
+.app-title {
+    font-size: 2.45rem;
+    line-height: 1.12;
+    font-weight: 850;
+    color: var(--slate-900);
+    max-width: 900px;
+    margin: 0;
+}
+
+.app-title-accent {
+    width: 140px;
+    height: 5px;
+    border-radius: 999px;
+    margin-top: 0.7rem;
+    background: linear-gradient(90deg, var(--green-500), var(--green-700));
+}
+
+.preview-shell {
+    min-height: 122px;
+    display: flex;
+    align-items: stretch;
+}
+
+.preview-note,
+.empty-box,
+.file-name-box {
+    border-radius: 14px;
+    border: 1px solid rgba(22, 101, 52, 0.10);
+    background: linear-gradient(180deg, rgba(240,253,244,0.96), rgba(236,253,245,0.88));
+    padding: 0.9rem 1rem;
+    color: var(--green-800);
+}
+
+.file-name-box {
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    background: rgba(241,245,249,0.82);
+    border-color: rgba(15, 23, 42, 0.12);
+    color: var(--slate-700);
+    word-break: break-word;
+    margin-top: 0.5rem;
+}
+
+.section-gap {
+    margin-top: 0.55rem;
+    margin-bottom: 0.45rem;
+}
+
+.decode-radio-wrap {
+    padding-top: 0.15rem;
+    padding-bottom: 0.15rem;
+}
+
+div[role="radiogroup"] {
+    gap: 1rem !important;
+}
+
+hr.soft-divider {
+    border: none;
+    border-top: 1px solid rgba(22, 101, 52, 0.10);
+    margin: 0.75rem 0 0.4rem 0;
+}
+
+.result-caption {
+    color: var(--slate-500);
+    font-size: 0.93rem;
+}
+
+.tight-subheader {
+    margin-top: 0.2rem;
+}
+
+.top-card-run-gap {
+    margin-top: 0.7rem;
+}
+
+.bottom-card {
+    margin-top: 0.05rem;
+}
+
+div[data-testid="stMarkdownContainer"] p {
+    word-break: break-word;
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
 
-# ============================================================
-# Helpers
-# ============================================================
-
 def clean_dna_text(text: str) -> str:
     return re.sub(r"[^ACGTacgt]", "", text or "").upper()
 
 
-def load_uploaded_text(uploaded) -> str:
+def load_uploaded_text(uploaded: Any) -> str:
     if uploaded is None:
         return ""
     return uploaded.getvalue().decode("utf-8", errors="ignore")
@@ -248,18 +341,24 @@ def compression_score_from_report(report: dict[str, Any]) -> str:
     return "—" if score is None else f"{float(score):.4f}"
 
 
-def payload_binary_from_report(report: dict[str, Any]) -> tuple[str, str]:
-    """Return the selected compressed/self-describing payload as a 0/1 bitstring.
+def encoded_file_size_from_report(report: dict[str, Any]) -> str:
+    selected = report.get("compression", {}).get("selected", {}) or {}
+    package = report.get("package", {}) or {}
+    size = (
+        selected.get("size_bytes")
+        or selected.get("rep_size_bytes")
+        or selected.get("representation_len_bytes")
+        or package.get("representation_len_bytes")
+    )
+    return fmt_bytes(size)
 
-    This is the exact byte stream that is sent into DNA design, not the original file.
-    """
+
+def payload_binary_from_report(report: dict[str, Any]) -> tuple[str, str]:
     artifacts = report.get("artifacts", {}) or {}
     payload_path = artifacts.get("representation_bin")
-
     if payload_path and Path(payload_path).exists():
         payload_bytes = read_bytes(Path(payload_path))
         return bytes_to_bitstring(payload_bytes), "selected_payload_bits.txt"
-
     return "", "selected_payload_bits.txt"
 
 
@@ -279,7 +378,13 @@ def dna_stats(dna: str, report: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def reset_decode_state() -> None:
-    for key in ("decode_result", "restored_path", "decode_error"):
+    for key in (
+        "decode_result",
+        "restored_path",
+        "decode_error",
+        "uploaded_dna_clean",
+        "uploaded_dna_name",
+    ):
         st.session_state.pop(key, None)
 
 
@@ -300,11 +405,15 @@ def run_encoding(input_path: Path) -> None:
     st.session_state["encode_result"] = result
     st.session_state["encode_report"] = result.get("report", {})
     st.session_state["encoded_dna"] = result.get("dna_sequence", "")
+    st.session_state.pop("encode_error", None)
     reset_decode_state()
 
 
 def run_decoding(dna_text: str, preferred_stem: str = "restored") -> None:
-    work_root = Path(st.session_state.get("work_root") or tempfile.mkdtemp(prefix="dna_clean_ui_decode_"))
+    work_root = Path(
+        st.session_state.get("work_root")
+        or tempfile.mkdtemp(prefix="dna_clean_ui_decode_")
+    )
     decoded_dir = work_root / "decoded_output"
 
     result = decode_dna_sequence(
@@ -332,28 +441,16 @@ def run_decoding(dna_text: str, preferred_stem: str = "restored") -> None:
 def metric_or_blank(label: str, value: Any) -> None:
     st.metric(label, "—" if value is None or value == "" else value)
 
-def encoded_file_size_from_report(report: dict[str, Any]) -> str:
-    selected = report.get("compression", {}).get("selected", {}) or {}
-    package = report.get("package", {}) or {}
 
-    size = (
-        selected.get("size_bytes")
-        or selected.get("rep_size_bytes")
-        or selected.get("representation_len_bytes")
-        or package.get("representation_len_bytes")
-    )
+def info_box(message: str) -> None:
+    st.markdown(f"<div class='preview-note'>{message}</div>", unsafe_allow_html=True)
 
-    return fmt_bytes(size)
+
+def filename_box(message: str) -> None:
+    st.markdown(f"<div class='file-name-box'>{message}</div>", unsafe_allow_html=True)
 
 
 def _read_restored_comparable_bytes(path: str | Path) -> tuple[bytes, str]:
-    """Return bytes suitable for original-vs-restored comparison.
-
-    The decoded file is the self-describing payload. For plain image/text files,
-    this is already directly comparable. For common lossless containers
-    generated from text/binary data, this function unwraps the container before
-    comparing with the original input.
-    """
     path = Path(path)
     data = read_bytes(path)
     suffix = path.suffix.lower()
@@ -377,7 +474,6 @@ def _read_restored_comparable_bytes(path: str | Path) -> tuple[bytes, str]:
 
 
 def image_quality_metrics(original_path: str | Path, restored_path: str | Path) -> dict[str, Any]:
-    """Compute lightweight PSNR/SSIM between original image and restored image."""
     if Image is None or np is None:
         return {"available": False, "reason": "Pillow or NumPy is not available."}
 
@@ -394,498 +490,372 @@ def image_quality_metrics(original_path: str | Path, restored_path: str | Path) 
         mse = float(np.mean((a - b) ** 2))
         psnr = 99.0 if mse <= 1e-12 else 20.0 * math.log10(255.0 / math.sqrt(mse))
 
+        scores: list[float] = []
         c1 = (0.01 * 255.0) ** 2
         c2 = (0.03 * 255.0) ** 2
-        ssim_scores = []
-
         for ch in range(3):
             x = a[:, :, ch]
             y = b[:, :, ch]
-
             mux = float(np.mean(x))
             muy = float(np.mean(y))
             vx = float(np.var(x))
             vy = float(np.var(y))
             cov = float(np.mean((x - mux) * (y - muy)))
-
-            num = (2 * mux * muy + c1) * (2 * cov + c2)
             den = (mux * mux + muy * muy + c1) * (vx + vy + c2)
-            ssim_scores.append(1.0 if abs(den) < 1e-12 else float(num / den))
-
-        ssim = max(-1.0, min(1.0, float(np.mean(ssim_scores))))
+            ssim = 1.0 if abs(den) < 1e-12 else ((2 * mux * muy + c1) * (2 * cov + c2)) / den
+            scores.append(float(ssim))
 
         return {
             "available": True,
             "psnr": float(psnr),
-            "ssim": float(ssim),
             "mse": float(mse),
-            "reason": "",
+            "ssim": float(sum(scores) / len(scores)),
         }
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
 
 
-def text_accuracy_metrics(original_path: str | Path, restored_path: str | Path) -> dict[str, Any]:
-    """Compare original text-like file with decoded/restored content.
-
-    For compressed decoded payloads, common containers are decompressed first.
-    """
-    try:
-        original_bytes = read_bytes(Path(original_path))
-        restored_bytes, restore_mode = _read_restored_comparable_bytes(restored_path)
-
-        original_text = original_bytes.decode("utf-8", errors="ignore")
-        restored_text = restored_bytes.decode("utf-8", errors="ignore")
-
-        exact_bytes = original_bytes == restored_bytes
-        exact_text = original_text == restored_text
-        similarity = difflib.SequenceMatcher(None, original_text, restored_text).ratio()
-
-        if original_text:
-            matching_chars = sum(1 for a, b in zip(original_text, restored_text) if a == b)
-            char_accuracy = matching_chars / max(len(original_text), len(restored_text), 1)
-        else:
-            char_accuracy = 1.0 if not restored_text else 0.0
-
-        return {
-            "available": True,
-            "restore_mode": restore_mode,
-            "exact_bytes": bool(exact_bytes),
-            "exact_text": bool(exact_text),
-            "similarity": float(similarity),
-            "char_accuracy": float(char_accuracy),
-            "original_chars": len(original_text),
-            "restored_chars": len(restored_text),
-            "reason": "",
-        }
-    except Exception as exc:
-        return {
-            "available": False,
-            "reason": str(exc),
-            "restore_mode": "unavailable",
-            "exact_bytes": False,
-            "exact_text": False,
-            "similarity": 0.0,
-            "char_accuracy": 0.0,
-            "original_chars": 0,
-            "restored_chars": 0,
-        }
-
-
-def render_recovery_analysis(input_path_value: str | None, restored_path: Path, decoded_ok: bool | None) -> None:
-    """Render domain-specific quality/accuracy metrics after decoding."""
-    st.markdown("#### Recovery Analysis")
-
-    if not input_path_value or not Path(input_path_value).exists():
-        st.info("Original input file is unavailable, so recovery metrics cannot be computed.")
-        return
-
-    input_path = Path(input_path_value)
-    kind = infer_media_kind(input_path)
-
-    if kind == "image":
-        metrics = image_quality_metrics(input_path, restored_path)
-        if metrics.get("available"):
-            c1, c2, c3 = st.columns(3)
-            c1.metric("PSNR", f"{metrics['psnr']:.2f} dB")
-            c2.metric("SSIM", f"{metrics['ssim']:.4f}")
-            c3.metric("MSE", f"{metrics['mse']:.2f}")
-            # st.caption(
-            #     "PSNR and SSIM compare the original input image with the decoded/restored image. "
-            #     "For lossy compression, DNA decoding can be successful even when the restored image is not byte-identical to the original."
-            # )
-        else:
-            st.info(f"Image metrics unavailable: {metrics.get('reason', 'unknown error')}")
-        return
-
-    if kind == "text":
-        metrics = text_accuracy_metrics(input_path, restored_path)
-        if metrics.get("available"):
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Text Accuracy", f"{metrics['char_accuracy'] * 100:.2f}%")
-            c2.metric("Text Similarity", f"{metrics['similarity']:.4f}")
-            c3.metric("Exact Text Match", "Passed" if metrics["exact_text"] else "Failed")
-
-            c1, c2 = st.columns(2)
-            c1.metric("Original Chars", f"{metrics['original_chars']:,}")
-            c2.metric("Restored Chars", f"{metrics['restored_chars']:,}")
-
-            st.caption(
-                f"Text comparison mode: {metrics['restore_mode']}. "
-                "For lossless text compression, exact text match should pass after decoding."
-            )
-        else:
-            st.info(f"Text metrics unavailable: {metrics.get('reason', 'unknown error')}")
-        return
-
-    # Generic validation for audio/video/document/binary.
-    restored_bytes = read_bytes(restored_path)
-    input_bytes = read_bytes(input_path)
-    exact_original = sha256_bytes(input_bytes) == sha256_bytes(restored_bytes)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Original Size", fmt_bytes(len(input_bytes)))
-    c2.metric("Restored Size", fmt_bytes(len(restored_bytes)))
-    c3.metric("Original SHA256", "Passed" if exact_original else "Transformed")
-
-    st.caption(
-        "For non-image/non-text files, this panel reports file-level validation. "
-        "The primary DNA validation remains payload integrity."
+def text_diff_preview(a: str, b: str, max_lines: int = 80) -> str:
+    lines = list(
+        difflib.unified_diff(
+            a.splitlines(),
+            b.splitlines(),
+            fromfile="original",
+            tofile="restored",
+            lineterm="",
+        )
     )
+    return "\n".join(lines[:max_lines]) if lines else "No textual differences detected."
 
 
-# ============================================================
-# Header
-# ============================================================
+if "encode_result" not in st.session_state:
+    st.session_state["encode_result"] = None
+if "encode_report" not in st.session_state:
+    st.session_state["encode_report"] = {}
+if "encoded_dna" not in st.session_state:
+    st.session_state["encoded_dna"] = ""
 
-st.title("🧬 DNA Storage Pipeline")
-# st.caption("Hierarchical pipeline: compression is selected first, then DNA design is selected from Simple Mapping and rule-based mappings with four initial dimers. Whitening is disabled.")
-
-
-# ============================================================
-# State
-# ============================================================
-
-if "input_path" not in st.session_state:
-    st.session_state["input_path"] = None
-
-
-# ============================================================
-# Layout: four simple blocks
-# ============================================================
+st.markdown(
+    """
+<div class="app-title-wrap">
+    <div class="app-title">🧬 Automatic Selection for Compression and DNA Design</div>
+    <div class="app-title-accent"></div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 top_left, top_right = st.columns(2, gap="large")
 bottom_left, bottom_right = st.columns(2, gap="large")
 
-
-# ============================================================
-# Top-left: Encoding
-# ============================================================
-
 with top_left:
     with st.container(border=True):
-        st.subheader("Encoding")
+        st.header("Encoding")
 
-        input_path_value = st.session_state.get("input_path")
-        if input_path_value and Path(input_path_value).exists():
-            display_file_preview(
-                Path(input_path_value),
-                title="Input preview",
-                image_width=INPUT_IMAGE_WIDTH,
-                image_use_container_width=SHOW_IMAGE_FULL_WIDTH,
-                show_file_meta=False,
-                text_height=180,
-            )
+        input_path_str = st.session_state.get("input_path")
+        preview_col = st.container()
+        with preview_col:
+            if input_path_str and Path(input_path_str).exists():
+                display_file_preview(
+                    input_path_str,
+                    title="Input preview",
+                    image_width=INPUT_IMAGE_WIDTH,
+                    image_use_container_width=SHOW_IMAGE_FULL_WIDTH,
+                )
+            else:
+                info_box("Upload a file to start.")
+
+        if input_path_str and Path(input_path_str).exists():
+            filename_box(Path(input_path_str).name)
         else:
-            st.info("Upload a file to start.")
+            filename_box("No file selected")
 
-        if input_path_value and Path(input_path_value).exists():
-            input_file = Path(input_path_value)
+        st.markdown("<div class='section-gap'></div>", unsafe_allow_html=True)
+        st.subheader("Browse")
 
-            file_name = input_file.name
-            file_size = fmt_bytes(input_file.stat().st_size)
-            file_kind = infer_media_kind(input_file)
-            file_ext = input_file.suffix.lower() or "no extension"
-
-            st.markdown(
-                f"""
-                <div class='file-name-box'>
-                    <div style='font-size:18px; font-weight:800; margin-bottom:6px;'>
-                        {file_name}
-                    </div>
-                    <div style='font-size:15px; line-height:1.7;'>
-                        <span class='muted'><b>Type:</b> {file_kind.capitalize()}</span><br>
-                        <span class='muted'><b>Extension:</b> {file_ext.upper()}</span><br>
-                        <span class='muted'><b>Uploaded Size:</b> {file_size}</span>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                """
-                <div class='file-name-box'>
-                    No file selected
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )        
-        st.markdown("#### Browse")
-        uploaded = st.file_uploader(
-            "Upload input file",
+        uploaded_file = st.file_uploader(
+            "Upload a file",
+            label_visibility="collapsed",
             type=None,
             accept_multiple_files=False,
-            key="encoding_browse",
-            label_visibility="collapsed",
+            key="encode_upload_file",
         )
 
-        if uploaded is not None:
-            upload_sig = f"{uploaded.name}_{uploaded.size}"
-
-            if st.session_state.get("last_upload_sig") != upload_sig:
-                validation = validate_uploaded_file(uploaded)
-
-                for err in validation.get("errors", []):
+        if uploaded_file is not None:
+            validation = validate_uploaded_file(uploaded_file)
+            if validation["accepted"]:
+                st.caption(
+                    f"{validation['filename']} · {validation['media_kind']} · {validation['size_mb']} MB"
+                )
+            else:
+                for err in validation["errors"]:
                     st.error(err)
-                for msg in validation.get("warnings", []):
-                    st.warning(msg)
+                for warn in validation["warnings"]:
+                    st.warning(warn)
 
-                if validation.get("accepted", True):
-                    work_root = Path(tempfile.mkdtemp(prefix="dna_clean_ui_upload_"))
-                    input_path = save_uploaded_file(uploaded, work_root / "input")
-
-                    st.session_state["input_path"] = str(input_path)
-                    st.session_state["last_upload_sig"] = upload_sig
-
-                    # Clear old results when a new file is uploaded
-                    for key in (
-                        "encode_result",
-                        "encode_report",
-                        "encoded_dna",
-                        "decode_result",
-                        "restored_path",
-                        "decode_error",
-                    ):
-                        st.session_state.pop(key, None)
-        run_encode = st.button(
-            "Run",
-            type="primary",
-            use_container_width=True,
-            key="btn_run_encoding_clean_ui",
-        )
+        st.markdown("<div class='top-card-run-gap'></div>", unsafe_allow_html=True)
+        run_encode = st.button("Run", key="run_encode", type="primary", use_container_width=True)
 
         if run_encode:
-            input_path_value = st.session_state.get("input_path")
-            if not input_path_value:
-                st.error("Please browse and upload a file first.")
+            if uploaded_file is None:
+                st.error("Please upload a file first.")
             else:
-                try:
-                    with st.spinner("Running compression and DNA design scoring..."):
-                        run_encoding(Path(input_path_value))
-                    st.success("Encoding completed.")
-                except Exception as exc:
-                    st.exception(exc)
+                validation = validate_uploaded_file(uploaded_file)
+                if not validation["accepted"]:
+                    st.error("Uploaded file is not accepted. Fix the validation errors first.")
+                else:
+                    try:
+                        upload_root = Path(tempfile.mkdtemp(prefix="dna_ui_upload_"))
+                        input_path = save_uploaded_file(uploaded_file, upload_root)
+                        run_encoding(input_path)
+                        st.rerun()
+                    except Exception as exc:
+                        st.session_state["encode_error"] = str(exc)
+                        st.error(f"Encoding failed: {exc}")
 
-
-# ============================================================
-# Top-right: Decoding
-# ============================================================
+        if st.session_state.get("encode_error"):
+            st.error(st.session_state["encode_error"])
 
 with top_right:
     with st.container(border=True):
-        st.subheader("Decoding")
+        st.header("Decoding")
 
-        if st.session_state.get("decode_success_message"):
-            st.success(st.session_state.pop("decode_success_message"))
-
-        restored_path_value = st.session_state.get("restored_path")
-        if restored_path_value and Path(restored_path_value).exists():
+        restored_path = st.session_state.get("restored_path")
+        if restored_path and Path(restored_path).exists():
             display_file_preview(
-                Path(restored_path_value),
+                restored_path,
                 title="Decoded preview",
                 image_width=OUTPUT_IMAGE_WIDTH,
                 image_use_container_width=SHOW_IMAGE_FULL_WIDTH,
-                show_file_meta=False,
-                text_height=180,
             )
         else:
-            st.info("Decoded preview will appear here.")
+            info_box("Decoded preview will appear here.")
 
+        current_decode_source = st.session_state.get("decode_source_clean_ui", "From encoding")
+        if current_decode_source == "From encoding":
+            encoded_dna = st.session_state.get("encoded_dna", "")
+            if encoded_dna:
+                filename_box(f"{len(encoded_dna):,} nt available from encoding")
+            else:
+                filename_box("No encoded DNA available")
+        else:
+            uploaded_name = st.session_state.get("uploaded_dna_name")
+            uploaded_clean = st.session_state.get("uploaded_dna_clean", "")
+            if uploaded_name and uploaded_clean:
+                filename_box(f"{uploaded_name} · {len(uploaded_clean):,} nt")
+            elif uploaded_name:
+                filename_box(f"{uploaded_name} · No valid A/C/G/T characters found")
+            else:
+                filename_box("No DNA file selected")
+
+        st.markdown("<div class='section-gap'></div>", unsafe_allow_html=True)
+        st.subheader("Browse")
+
+        st.markdown("<div class='decode-radio-wrap'>", unsafe_allow_html=True)
         decode_source = st.radio(
-            "Input",
-            ["From encoding", "Browse DNA file"],
+            "Decode source",
+            ["From encoding", "User Upload"],
             horizontal=True,
+            label_visibility="collapsed",
             key="decode_source_clean_ui",
         )
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        dna_to_decode = ""
+        decode_dna_text = ""
+        preferred_stem = "restored"
+
         if decode_source == "From encoding":
-            dna_to_decode = st.session_state.get("encoded_dna", "")
-            if dna_to_decode:
-                st.markdown(f"<div class='file-name-box'>Loaded from encoding · {len(dna_to_decode):,} nt</div>", unsafe_allow_html=True)
-            else:
-                st.markdown("<div class='file-name-box'>No encoded DNA available</div>", unsafe_allow_html=True)
+            encoded_dna = st.session_state.get("encoded_dna", "")
+            if encoded_dna:
+                decode_dna_text = encoded_dna
+                input_path = st.session_state.get("input_path")
+                if input_path:
+                    preferred_stem = Path(input_path).stem or "restored"
         else:
-            uploaded_dna = st.file_uploader(
-                "Browse",
-                type=["txt", "dna", "fasta", "fa"],
+            uploaded_dna_file = st.file_uploader(
+                "Upload DNA file",
+                label_visibility="collapsed",
+                type=["txt", "fasta", "fa", "dna"],
                 accept_multiple_files=False,
-                key="decode_browse_dna",
+                key="decode_upload_dna",
             )
-            if uploaded_dna is not None:
-                dna_to_decode = clean_dna_text(load_uploaded_text(uploaded_dna))
-                st.markdown(f"<div class='file-name-box'>{uploaded_dna.name} · {len(dna_to_decode):,} nt</div>", unsafe_allow_html=True)
+            if uploaded_dna_file is not None:
+                raw_text = load_uploaded_text(uploaded_dna_file)
+                cleaned = clean_dna_text(raw_text)
+                st.session_state["uploaded_dna_clean"] = cleaned
+                st.session_state["uploaded_dna_name"] = uploaded_dna_file.name
+                preferred_stem = Path(uploaded_dna_file.name).stem or "restored"
+                if cleaned:
+                    decode_dna_text = cleaned
 
-        run_decode = st.button(
-            "Run",
-            type="primary",
-            use_container_width=True,
-            key="btn_run_decoding_clean_ui",
-        )
+        st.markdown("<div class='top-card-run-gap'></div>", unsafe_allow_html=True)
+        run_decode = st.button("Run", key="run_decode", type="primary", use_container_width=True)
 
         if run_decode:
-            if not dna_to_decode:
-                st.error("No DNA sequence is available for decoding.")
+            if not decode_dna_text:
+                st.error("Please provide DNA input first.")
             else:
                 try:
-                    input_name = Path(st.session_state.get("input_path") or "restored").stem
-                    with st.spinner("Decoding DNA and restoring file..."):
-                        run_decoding(dna_to_decode, preferred_stem=input_name)
-                    # Force one rerun so the decoded preview block above is refreshed immediately.
-                    #st.session_state["decode_success_message"] = "Decoding completed."
+                    run_decoding(decode_dna_text, preferred_stem=preferred_stem)
                     st.rerun()
                 except Exception as exc:
                     st.session_state["decode_error"] = str(exc)
-                    st.exception(exc)
+                    st.error(f"Decoding failed: {exc}")
 
-
-# ============================================================
-# Bottom-left: Encoding results
-# ============================================================
+        if st.session_state.get("decode_error"):
+            st.error(st.session_state["decode_error"])
 
 with bottom_left:
     with st.container(border=True):
-        st.subheader("Encoding result")
+        st.header("Encoding result")
 
-        result = st.session_state.get("encode_result")
-        report = st.session_state.get("encode_report", {})
-        dna = st.session_state.get("encoded_dna", "")
+        encode_result = st.session_state.get("encode_result")
+        encode_report = st.session_state.get("encode_report", {})
+        encoded_dna = st.session_state.get("encoded_dna", "")
 
-        if not result:
-            st.info("Run encoding to show selected compressor and DNA design.")
+        if not encode_result or not encoded_dna:
+            info_box("Run encoding to show selected compressor and DNA design.")
         else:
-            stats = dna_stats(dna, report)
+            stats = dna_stats(encoded_dna, encode_report)
 
- 
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                metric_or_blank("Compression Method", method_from_report(report))
-
-            with c2:
-                metric_or_blank("Encoded File Type", extension_from_report(report))
-
-            c1, c2 = st.columns(2)
-            with c1:
-                metric_or_blank("DNA design rule", dna_rule_from_report(report))
-            with c2:
-                metric_or_blank("DNA score", dna_score_from_report(report))
-
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                metric_or_blank("Encoded File Size", encoded_file_size_from_report(report))
-            with c2:
-                metric_or_blank("Compression score", compression_score_from_report(report))
-            with c3:
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                metric_or_blank("Compressor", method_from_report(encode_report))
+            with m2:
+                metric_or_blank("Restore ext", extension_from_report(encode_report))
+            with m3:
+                metric_or_blank("DNA design", dna_rule_from_report(encode_report))
+            with m4:
                 metric_or_blank("DNA length", f"{stats['dna_len']:,} nt")
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("GC content", f"{stats['gc']:.4f}")
-            c2.metric("HP count", f"{stats['hp_count']:,}")
-            c3.metric("HP length", f"{stats['hp_longest']} nt")
+            m5, m6, m7, m8 = st.columns(4)
+            with m5:
+                metric_or_blank("Compression score", compression_score_from_report(encode_report))
+            with m6:
+                metric_or_blank("DNA score", dna_score_from_report(encode_report))
+            with m7:
+                metric_or_blank("GC content", f"{stats['gc'] * 100:.2f}%")
+            with m8:
+                metric_or_blank("Longest homopolymer", stats["hp_longest"])
 
-            st.download_button(
-                "Download DNA string",
-                data=dna.encode("utf-8"),
-                file_name="dna_sequence.txt",
-                mime="text/plain",
-                use_container_width=True,
-                key="download_dna_clean_ui",
-            )
+            st.caption(f"Selected payload size: {encoded_file_size_from_report(encode_report)}")
 
-            binary_bits, binary_filename = payload_binary_from_report(report)
-            if binary_bits:
+            artifacts = encode_report.get("artifacts", {}) or {}
+            dna_path = artifacts.get("dna_text")
+            if dna_path and Path(dna_path).exists():
                 st.download_button(
-                    "Download binary string",
-                    data=binary_bits.encode("utf-8"),
-                    file_name=binary_filename,
+                    "Download DNA",
+                    data=Path(dna_path).read_text(encoding="utf-8", errors="ignore"),
+                    file_name=Path(dna_path).name,
                     mime="text/plain",
                     use_container_width=True,
-                    key="download_binary_bits_clean_ui",
+                )
+            else:
+                st.download_button(
+                    "Download DNA",
+                    data=encoded_dna,
+                    file_name="encoded_dna.txt",
+                    mime="text/plain",
+                    use_container_width=True,
                 )
 
-            st.download_button(
-                "Download report",
-                data=json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8"),
-                file_name="encode_report.json",
-                mime="application/json",
-                use_container_width=True,
-                key="download_report_clean_ui",
-            )
+            with st.expander("DNA preview", expanded=False):
+                st.text_area(
+                    "DNA sequence",
+                    value=encoded_dna[:DNA_PREVIEW_CHARS],
+                    height=240,
+                    disabled=True,
+                    label_visibility="collapsed",
+                )
 
+            payload_bits, payload_name = payload_binary_from_report(encode_report)
+            if payload_bits:
+                st.download_button(
+                    "Download selected payload bits",
+                    data=payload_bits,
+                    file_name=payload_name,
+                    mime="text/plain",
+                    use_container_width=True,
+                )
 
-# ============================================================
-# Bottom-right: Decoding results
-# ============================================================
+            with st.expander("Raw report", expanded=False):
+                st.code(json.dumps(encode_report, indent=2, ensure_ascii=False), language="json")
 
 with bottom_right:
     with st.container(border=True):
-        st.subheader("Decoding result")
+        st.header("Decoding result")
 
         decode_result = st.session_state.get("decode_result")
-        restored_path_value = st.session_state.get("restored_path")
-        error = st.session_state.get("decode_error")
+        restored_path_str = st.session_state.get("restored_path")
+        input_path_str = st.session_state.get("input_path")
 
-        if error:
-            st.error(error)
-
-        if not decode_result or not restored_path_value or not Path(restored_path_value).exists():
-            st.info("Run decoding to show restored file result.")
+        if not decode_result or not restored_path_str or not Path(restored_path_str).exists():
+            info_box("Run decoding to show restored file result.")
         else:
-            restored_path = Path(restored_path_value)
+            restored_path = Path(restored_path_str)
             restored_bytes = read_bytes(restored_path)
+            restored_sha = sha256_bytes(restored_bytes)
 
-            decode_report = decode_result.get("report", {}) or {}
-            rule_name = (
-                get_nested(decode_report, "payload.rule_name")
-                or get_nested(decode_report, "decode_rule_used.rule_name")
-                or get_nested(decode_report, "selected_rule.rule_name")
-                or "auto"
-            )
-
-            rule_name_map = {
-                "SIMPLE": "Simple Mapping",
-                "Simple Mapping": "Simple Mapping",
-                "RINF_B16": "RINF_B16",
-                "R2_B15": "R2_B15",
-                "R1_B12": "R1_B12",
-                "R0_B9": "R0_B9",
-            }
-
-            rule = rule_name_map.get(str(rule_name), str(rule_name))
-
-            c1, c2 = st.columns(2)
-            c1.metric("Detected rule", rule)
-            c2.metric("Output size", fmt_bytes(len(restored_bytes)))
-
-            encode_report = st.session_state.get("encode_report", {}) or {}
-            expected_sha = (
-                get_nested(encode_report, "dna_payload.sha256")
-                or get_nested(encode_report, "zlib_payload.sha256")
-                or get_nested(encode_report, "package.zlib_sha256")
-            )
-            actual_sha = sha256_bytes(restored_bytes)
-            decoded_ok = None
-            if expected_sha:
-                decoded_ok = expected_sha == actual_sha
-                st.metric("DNA Decoding", "Successful" if decoded_ok else "Failed")
-                # st.caption(
-                #     "This validates whether the selected payload before DNA design was recovered exactly after DNA decoding."
-                # )
-            else:
-                st.metric("DNA Decoding", "Unavailable")
-                st.caption("No reference payload hash was found for validation.")
-
-            input_path_value = st.session_state.get("input_path")
-            render_recovery_analysis(input_path_value, restored_path, decoded_ok)
+            n1, n2, n3 = st.columns(3)
+            with n1:
+                metric_or_blank("Restored file", restored_path.name)
+            with n2:
+                metric_or_blank("Size", fmt_bytes(len(restored_bytes)))
+            with n3:
+                metric_or_blank("SHA-256", f"{restored_sha[:12]}…")
 
             st.download_button(
-                "Download decoded file",
+                "Download restored file",
                 data=restored_bytes,
                 file_name=restored_path.name,
                 mime="application/octet-stream",
                 use_container_width=True,
-                key="download_restored_clean_ui",
             )
+
+            display_file_preview(
+                restored_path,
+                title="Restored preview",
+                image_width=OUTPUT_IMAGE_WIDTH,
+                image_use_container_width=SHOW_IMAGE_FULL_WIDTH,
+            )
+
+            if input_path_str and Path(input_path_str).exists():
+                original_path = Path(input_path_str)
+                original_bytes = read_bytes(original_path)
+                original_sha = sha256_bytes(original_bytes)
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    metric_or_blank("Original size", fmt_bytes(len(original_bytes)))
+                with c2:
+                    metric_or_blank("Original SHA-256", f"{original_sha[:12]}…")
+                with c3:
+                    metric_or_blank("Exact bytes", "Yes" if original_sha == restored_sha else "No")
+
+                if original_path.suffix.lower() in {
+                    ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"
+                }:
+                    img_metrics = image_quality_metrics(original_path, restored_path)
+                    if img_metrics.get("available"):
+                        q1, q2, q3 = st.columns(3)
+                        with q1:
+                            metric_or_blank("PSNR", f"{img_metrics['psnr']:.3f}")
+                        with q2:
+                            metric_or_blank("SSIM", f"{img_metrics['ssim']:.4f}")
+                        with q3:
+                            metric_or_blank("MSE", f"{img_metrics['mse']:.3f}")
+
+                try:
+                    restored_cmp, mode = _read_restored_comparable_bytes(restored_path)
+                    if original_bytes != restored_cmp and original_path.suffix.lower() in {
+                        ".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml", ".py"
+                    }:
+                        original_text = original_bytes.decode("utf-8", errors="ignore")
+                        restored_text = restored_cmp.decode("utf-8", errors="ignore")
+                        with st.expander(f"Text diff ({mode})", expanded=False):
+                            st.code(text_diff_preview(original_text, restored_text), language="diff")
+                except Exception:
+                    pass
+
+            with st.expander("Raw decode report", expanded=False):
+                st.code(json.dumps(decode_result, indent=2, ensure_ascii=False), language="json")
