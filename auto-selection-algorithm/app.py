@@ -81,9 +81,9 @@ html, body, [class*="css"] {
 }
 
 .block-container {
-    padding-top: 1.1rem !important;
+    padding-top: 3.2rem !important;
     padding-bottom: 2rem !important;
-    max-width: 1180px !important;
+    max-width: 1120px !important;
 }
 
 section[data-testid="stSidebar"] {
@@ -165,25 +165,27 @@ div[data-testid="stFileUploader"] div[data-testid="stFileUploaderFile"] {
 }
 
 .app-title-wrap {
-    margin-top: 0.10rem;
-    margin-bottom: 1.1rem;
-    padding: 0.2rem 0 0.4rem 0;
+    margin-top: 0.2rem;
+    margin-bottom: 0.9rem;
+    padding: 0.15rem 0 0.25rem 0;
 }
 
 .app-title {
-    font-size: 2.45rem;
-    line-height: 1.12;
-    font-weight: 850;
+    font-size: 2rem;
+    line-height: 1.2;
+    font-weight: 800;
     color: var(--slate-900);
-    max-width: 900px;
+    max-width: 780px;
     margin: 0;
+    word-break: normal;
+    overflow-wrap: break-word;
 }
 
 .app-title-accent {
-    width: 140px;
-    height: 5px;
+    width: 110px;
+    height: 4px;
     border-radius: 999px;
-    margin-top: 0.7rem;
+    margin-top: 0.55rem;
     background: linear-gradient(90deg, var(--green-500), var(--green-700));
 }
 
