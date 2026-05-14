@@ -92,10 +92,44 @@ def homopolymer_count(dna: str, min_len: int=2) -> int:
     return cnt
 
 def homopolymer_stats(dna: str) -> Dict[str, int]:
+    dna = clean_dna_text(dna)
+    if not dna:
+        return {
+            "longest": 0,
+            "homo_count": 0,
+            "count_ge2": 0,
+            "count_ge3": 0,
+            "count_ge4": 0,
+            "total_runs": 0,
+            "exact_len_1": 0,
+            "exact_len_2": 0,
+            "exact_len_3": 0,
+            "exact_len_4": 0,
+            "exact_len_ge5": 0,
+        }
+
+    runs = []
+    cur = 1
+    for i in range(1, len(dna)):
+        if dna[i] == dna[i-1]:
+            cur += 1
+        else:
+            runs.append(cur)
+            cur = 1
+    runs.append(cur)
+
     return {
-        "longest": longest_homopolymer(dna),
-        "count_ge2": homopolymer_count(dna, 2),
-        "count_ge3": homopolymer_count(dna, 3),
+        "longest": max(runs),
+        "homo_count": sum(1 for r in runs if r >= 2),
+        "count_ge2": sum(1 for r in runs if r >= 2),
+        "count_ge3": sum(1 for r in runs if r >= 3),
+        "count_ge4": sum(1 for r in runs if r >= 4),
+        "total_runs": len(runs),
+        "exact_len_1": sum(1 for r in runs if r == 1),
+        "exact_len_2": sum(1 for r in runs if r == 2),
+        "exact_len_3": sum(1 for r in runs if r == 3),
+        "exact_len_4": sum(1 for r in runs if r == 4),
+        "exact_len_ge5": sum(1 for r in runs if r >= 5),
     }
 
 # ============================================================
@@ -104,32 +138,29 @@ def homopolymer_stats(dna: str) -> Dict[str, int]:
 _SIMPLE_ENC = {"00":"A", "01":"C", "10":"G", "11":"T"}
 _SIMPLE_DEC = {v:k for k,v in _SIMPLE_ENC.items()}
 
-def simple_encode_bits_to_dna(bits: str) -> str:
+def simple_encode_bits_to_dna(bits: str) -> Tuple[str, List[int]]:
     if any(c not in "01" for c in bits):
         raise ValueError("bits must be 0/1")
-    # pad to multiple of 2 (store pad length in header 2 bits is not enough; so we do leading-one trick)
-    # Use leading-one trick at bit-level to preserve leading zeros exactly, then map.
-    bits2 = "1" + bits
-    # pad to even
-    if len(bits2) % 2 == 1:
-        bits2 += "0"
-    out = []
-    for i in range(0, len(bits2), 2):
-        out.append(_SIMPLE_ENC[bits2[i:i+2]])
-    return "".join(out)
+    pad = len(bits) % 2
+    payload = bits + ("0" if pad else "")
+    header = "01" if pad else "00"
+    chunks = [header] + [payload[i:i+2] for i in range(0, len(payload), 2)]
+    return "".join(_SIMPLE_ENC[ch] for ch in chunks), [int(ch, 2) for ch in chunks]
 
-def simple_decode_dna_to_bits(dna: str) -> str:
+def simple_decode_dna_to_bits(dna: str) -> Tuple[str, List[int]]:
     dna = clean_dna_text(dna)
     if any(b not in "ACGT" for b in dna):
         raise ValueError("DNA must be A/C/G/T")
-    bits2 = "".join(_SIMPLE_DEC[b] for b in dna)
-    if not bits2 or bits2[0] != "0" and bits2[0] != "1":
-        raise ValueError("Corrupted stream")
-    # remove leading-one trick: first bit must be '1'
-    if bits2[0] != "1":
-        raise ValueError("Corrupted stream: leading '1' missing")
-    bits = bits2[1:]
-    return bits
+    chunks = [_SIMPLE_DEC[b] for b in dna]
+    if not chunks:
+        return "", []
+    header = chunks[0]
+    if header not in {"00", "01"}:
+        raise ValueError("Corrupted SIMPLE stream header")
+    bits = "".join(chunks[1:])
+    if header == "01":
+        bits = bits[:-1]
+    return bits, [int(ch, 2) for ch in chunks]
 
 # ============================================================
 # RN-B# rule definitions (dimer-based)
@@ -230,7 +261,7 @@ def _rank_dimers(allowed: List[str], prev: str, step: int, prefix: str, seed: st
 def encode_bits_to_dna(
     bits: str,
     scheme_name: str="R1_B12",
-    mode: str="TABLE",         # "TABLE" or "ALGO"
+    mode: str="TABLE",         # "SIMPLE", "TABLE" or "ALGO"
     seed: str="rn",
     init_dimer: str="TA",
     prepend_one: bool=True,
@@ -240,6 +271,9 @@ def encode_bits_to_dna(
     w_motif: float=1.0,
     ks=(4,6),
 ) -> Tuple[str, List[int]]:
+    if mode == "SIMPLE":
+        return simple_encode_bits_to_dna(bits)
+
     scheme = SCHEMES[scheme_name]
     base = scheme.base
     digits = bits_to_base_digits(bits, base, prepend_one=prepend_one)
@@ -285,6 +319,9 @@ def decode_dna_to_bits(
     w_motif: float=1.0,
     ks=(4,6),
 ) -> Tuple[str, List[int]]:
+    if mode == "SIMPLE":
+        return simple_decode_dna_to_bits(dna_text)
+
     scheme = SCHEMES[scheme_name]
     base = scheme.base
 
